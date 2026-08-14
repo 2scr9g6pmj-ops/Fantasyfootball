@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 
 ELIGIBLE = {
     "FLEX": {"RB", "WR", "TE"}, "WRT": {"RB", "WR", "TE"},
@@ -17,19 +18,23 @@ class Candidate:
 
 def optimize(slots: list[str], players: list[Candidate]) -> list[tuple[str, Candidate]]:
     active = [s for s in slots if s not in {"BN", "IR", "TAXI"}]
-    best: tuple[float, list[tuple[str, Candidate]]] = (-1, [])
-
     def eligible(slot, position): return position == slot or position in ELIGIBLE.get(slot, set())
-    def search(index, remaining, lineup, score):
-        nonlocal best
-        if index == len(active):
-            if score > best[0]: best = score, lineup.copy()
-            return
-        slot = active[index]
-        choices = [p for p in remaining if eligible(slot, p.position)]
-        for player in choices:
-            search(index + 1, [p for p in remaining if p.player_id != player.player_id], lineup + [(slot, player)], score + player.start_score)
-        if not choices: search(index + 1, remaining, lineup, score)
-    search(0, players, [], 0)
-    return best[1]
+    indexed = list(enumerate(players))
+    # Constrained slots first dramatically reduces the exact assignment search.
+    active.sort(key=lambda slot: sum(eligible(slot, p.position) for p in players))
 
+    @lru_cache(maxsize=None)
+    def search(index: int, used: int):
+        if index == len(active): return 0.0, ()
+        slot = active[index]
+        best_score, best_lineup = search(index + 1, used)
+        for player_index, player in indexed:
+            bit = 1 << player_index
+            if used & bit or not eligible(slot, player.position): continue
+            tail_score, tail = search(index + 1, used | bit)
+            score = player.start_score + tail_score
+            if score > best_score:
+                best_score, best_lineup = score, ((slot, player_index),) + tail
+        return best_score, best_lineup
+
+    return [(slot, players[index]) for slot, index in search(0, 0)[1]]
