@@ -95,4 +95,16 @@ This project uses only endpoints documented at [docs.sleeper.com](https://docs.s
 
 ## Next milestone
 
-Milestone 2 will add projection-provider abstractions, league-specific fantasy scoring, weekly matchup persistence, and legal lineup optimization. No projection endpoint is assumed in this milestone.
+The first Milestone 2 slice is included: a swappable `ProjectionProvider`, league-specific scoring, Conservative/Balanced/Upside profiles, legal lineup optimization, and a responsive dashboard. Import projected stat lines (not generic fantasy points) so each league's scoring is applied independently:
+
+```powershell
+$rows = @(
+  @{player_id="1234"; pass_yd=285; pass_td=2; int=1; rush_yd=22},
+  @{player_id="5678"; rush_yd=74; rush_td=0.5; rec=4; rec_yd=31}
+)
+Invoke-RestMethod -Method Post -ContentType application/json `
+  -Body ($rows | ConvertTo-Json) `
+  http://127.0.0.1:8000/api/leagues/LEAGUE_ID/projections/1/csv
+```
+
+Then open the dashboard and select the league, week, and risk profile. Advanced workload, matchup, weather, Vegas, waiver, and historical-evaluation inputs remain future milestones.
