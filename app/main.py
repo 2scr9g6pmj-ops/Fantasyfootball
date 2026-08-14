@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 
 from app.api.routes import router
 from app.api.lineups import router as lineup_router
+from app.api.yahoo import router as yahoo_router
 from app.database import Base, engine
 
 
@@ -22,6 +23,7 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(lineup_router)
+app.include_router(yahoo_router)
 
 
 @app.get("/health")

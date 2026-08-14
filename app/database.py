@@ -2,6 +2,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
 
@@ -18,10 +19,10 @@ def _ensure_sqlite_directory(url: str) -> None:
 
 settings = get_settings()
 _ensure_sqlite_directory(settings.database_url)
-engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
-)
+engine_kwargs = {"connect_args": {"check_same_thread": False}} if settings.database_url.startswith("sqlite") else {}
+if settings.database_url == "sqlite:///:memory:":
+    engine_kwargs["poolclass"] = StaticPool
+engine = create_engine(settings.database_url, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
@@ -31,4 +32,3 @@ def get_db():
         yield db
     finally:
         db.close()
-

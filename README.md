@@ -108,3 +108,15 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 ```
 
 Then open the dashboard and select the league, week, and risk profile. Advanced workload, matchup, weather, Vegas, waiver, and historical-evaluation inputs remain future milestones.
+
+## Optional Yahoo configuration
+
+Yahoo support is configured but disabled until you create a read-only Fantasy Sports app at [Yahoo Developer Network](https://developer.yahoo.com/apps/). Set its callback URL to `http://127.0.0.1:8000/api/platforms/yahoo/callback`, then add its Client ID and Client Secret to `.env`.
+
+Generate the local encryption key:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Copy the result into `APP_ENCRYPTION_KEY` in `.env`. Never commit `.env`. Restart the server, check `/api/platforms/yahoo/status`, and open `/api/platforms/yahoo/connect` to authorize Yahoo later. OAuth access and refresh tokens are encrypted before SQLite persistence; the application never stores a Yahoo password. Yahoo synchronization remains read-only.

@@ -141,3 +141,13 @@ class SyncHistory(Base):
     rosters_synced: Mapped[int] = mapped_column(Integer, default=0)
     players_synced: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class PlatformCredential(Base):
+    __tablename__ = "platform_credentials"
+    platform: Mapped[str] = mapped_column(String, primary_key=True)
+    account_id: Mapped[str | None] = mapped_column(String)
+    access_token_encrypted: Mapped[str] = mapped_column(Text)
+    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
