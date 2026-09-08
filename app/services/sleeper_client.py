@@ -46,3 +46,9 @@ class SleeperClient:
     async def get_all_players(self) -> dict[str, dict[str, Any]]:
         return await self._get("/players/nfl")
 
+    async def get_draft(self, draft_id: str) -> dict[str, Any]:
+        return await self._get(f"/draft/{draft_id}")
+
+    async def get_draft_picks(self, draft_id: str) -> list[dict[str, Any]]:
+        return await self._get(f"/draft/{draft_id}/picks")
+

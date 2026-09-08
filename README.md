@@ -4,6 +4,28 @@ Milestone 1 of a multi-league lineup and waiver assistant for Sleeper user **Cou
 
 The Sleeper integration is strictly read-only. It cannot change lineups, add/drop players, or submit waivers.
 
+## Live draft optimizer
+
+Open `/draft` for the real-time Draft Room. A draft session combines automatic pick imports with manual corrections and overrides. Yahoo and ESPN are the primary platform targets and are represented in the platform model without requiring login; their draft adapters remain to be implemented. Sleeper currently provides the reference automatic pick-import adapter.
+
+Create a session with `POST /api/drafts`. Its body accepts `platform` (`manual`, `yahoo`, `espn`, or `sleeper`), optional `platform_draft_id`, `user_team_id`, a player pool, team rosters, current pick/round, and league settings. Player records may include `player_id`, `name`, `position`, `projection`, `upside`, `adp`, `rank`, `tier`, `injury`, and news metadata.
+
+Every live edit is an event sent to `POST /api/drafts/{id}/events`:
+
+| Event | Payload purpose |
+| --- | --- |
+| `pick` | `player_id`, drafting `team_id`, and optional `pick` |
+| `keeper` | Player/team plus optional keeper round |
+| `set_clock` | Correct current `pick` and `round` |
+| `set_roster` | Replace a team's `player_ids` |
+| `pool` | `remove` or `add` player IDs |
+| `player_override` | Override projection, upside, ADP, rank, tier, injury, or news fields |
+| `settings_override` | Override teams, scoring, or `roster_positions` |
+
+Each response contains the rebuilt state, roster construction, top recommendations, Draft/Wait/Target Later guidance, positional scarcity, estimated next-pick survival, and an explanation. `POST /undo` and `POST /redo` move the event cursor; applying a new event after undo creates a clean history branch. `POST /sync` imports new picks for a configured Sleeper draft and deduplicates already imported picks.
+
+The recommendation score combines projection, value above replacement, upside, roster need, tier scarcity, injury/news risk, and an ADP-based reach penalty. Survival is an estimate—not a guarantee—and becomes more useful when current ADP and complete player-pool data are supplied.
+
 ## What Milestone 1 includes
 
 - Sleeper username-to-user-ID resolution

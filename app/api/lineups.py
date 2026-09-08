@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import FantasyRoster, League, NFLPlayer, RosterPlayer, WeeklyPlayerProjection
 from app.services.lineup_optimizer import Candidate, optimize
-from app.services.recommendation_engine import start_score
+from app.services.recommendation_engine import decision_breakdown
 from app.services.scoring_engine import fantasy_points
 
 router = APIRouter(prefix="/api")
@@ -22,9 +22,10 @@ def recommendations(league_id: str, week: int, profile: str = Query("balanced", 
     for row in rows:
         player = db.get(NFLPlayer, row.player_id)
         points = fantasy_points(projections.get(row.player_id, {}), league.scoring_settings)
-        score = start_score(points, player.injury_status, profile)
+        decision = decision_breakdown(points, player.injury_status, profile, projections.get(row.player_id, {}))
+        score = decision["decision_score"]
         candidates.append(Candidate(row.player_id, player.position or "", points, score))
-        details[row.player_id] = {"name": player.full_name, "team": player.team, "position": player.position, "injury": player.injury_status, "current": row.is_starter}
+        details[row.player_id] = {"name": player.full_name, "team": player.team, "position": player.position, "injury": player.injury_status, "current": row.is_starter, "decision": decision}
     lineup = optimize(league.roster_positions, candidates)
     recommended = [{"slot": slot, **details[p.player_id], "player_id": p.player_id, "projection": p.projection, "start_score": p.start_score} for slot, p in lineup]
     current_ids = {r.player_id for r in rows if r.is_starter}

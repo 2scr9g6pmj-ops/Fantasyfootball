@@ -23,3 +23,12 @@ async def test_missing_user_has_clear_error():
     async with httpx.AsyncClient() as http:
         with pytest.raises(SleeperAPIError, match="not found"):
             await SleeperClient("https://api.test/v1", client=http).get_user("nobody")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_draft_picks_request():
+    respx.get("https://api.test/v1/draft/d1/picks").mock(return_value=httpx.Response(200, json=[{"player_id": "p1", "pick_no": 1}]))
+    async with httpx.AsyncClient() as http:
+        picks = await SleeperClient("https://api.test/v1", client=http).get_draft_picks("d1")
+        assert picks[0]["player_id"] == "p1"

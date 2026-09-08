@@ -141,3 +141,42 @@ class SyncHistory(Base):
     rosters_synced: Mapped[int] = mapped_column(Integer, default=0)
     players_synced: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class DraftSession(Base):
+    __tablename__ = "draft_sessions"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    league_id: Mapped[str | None] = mapped_column(String, index=True)
+    platform: Mapped[str] = mapped_column(String, default="manual")
+    platform_draft_id: Mapped[str | None] = mapped_column(String, index=True)
+    user_team_id: Mapped[str] = mapped_column(String)
+    base_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    cursor: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
+    events: Mapped[list["DraftEvent"]] = relationship(cascade="all, delete-orphan", order_by="DraftEvent.sequence")
+
+
+class DraftEvent(Base):
+    __tablename__ = "draft_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("draft_sessions.id", ondelete="CASCADE"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source: Mapped[str] = mapped_column(String, default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    __table_args__ = (UniqueConstraint("session_id", "sequence"),)
+
+
+class YahooConnection(Base):
+    __tablename__ = "yahoo_connections"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    yahoo_guid: Mapped[str | None] = mapped_column(String, index=True)
+    encrypted_tokens: Mapped[str | None] = mapped_column(Text)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    league_mappings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
