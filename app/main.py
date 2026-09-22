@@ -1,12 +1,33 @@
 from contextlib import asynccontextmanager
+import base64
+import hmac
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import router
 from app.api.lineups import router as lineup_router
 from app.api.yahoo import router as yahoo_router
 from app.database import Base, engine, ensure_schema_compatibility
+from app.config import get_settings
+
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        settings = get_settings()
+        if not settings.app_access_username or not settings.app_access_password or request.url.path == "/health":
+            return await call_next(request)
+        authorization = request.headers.get("Authorization", "")
+        try:
+            scheme, encoded = authorization.split(" ", 1)
+            username, password = base64.b64decode(encoded).decode().split(":", 1)
+        except (ValueError, UnicodeDecodeError):
+            scheme = username = password = ""
+        valid = scheme.lower() == "basic" and hmac.compare_digest(username, settings.app_access_username) and hmac.compare_digest(password, settings.app_access_password)
+        if not valid:
+            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Fantasy Football"'})
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -22,6 +43,7 @@ app = FastAPI(
     description="Read-only multi-league Sleeper data sync and foundation for lineup recommendations.",
     lifespan=lifespan,
 )
+app.add_middleware(BasicAuthMiddleware)
 app.include_router(router)
 app.include_router(lineup_router)
 app.include_router(yahoo_router)

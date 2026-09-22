@@ -38,7 +38,7 @@ def status(db: Session = Depends(get_db)):
 def connect():
     settings = _configured()
     state = URLSafeTimedSerializer(settings.app_encryption_key, salt="yahoo-oauth").dumps({"platform": "yahoo"})
-    params = {"client_id": settings.yahoo_client_id, "redirect_uri": settings.yahoo_redirect_uri, "response_type": "code", "state": state}
+    params = {"client_id": settings.yahoo_client_id, "redirect_uri": settings.effective_yahoo_redirect_uri, "response_type": "code", "state": state}
     return RedirectResponse("https://api.login.yahoo.com/oauth2/request_auth?" + urlencode(params))
 
 
@@ -50,7 +50,7 @@ async def callback(code: str, state: str = Query(...), db: Session = Depends(get
     basic = base64.b64encode(f"{settings.yahoo_client_id}:{settings.yahoo_client_secret}".encode()).decode()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post("https://api.login.yahoo.com/oauth2/get_token", headers={"Authorization": f"Basic {basic}"}, data={"grant_type": "authorization_code", "redirect_uri": settings.yahoo_redirect_uri, "code": code})
+            response = await client.post("https://api.login.yahoo.com/oauth2/get_token", headers={"Authorization": f"Basic {basic}"}, data={"grant_type": "authorization_code", "redirect_uri": settings.effective_yahoo_redirect_uri, "code": code})
             if response.is_error:
                 raise HTTPException(502, "Yahoo rejected the authorization code. Please connect Yahoo again.")
             token = response.json()

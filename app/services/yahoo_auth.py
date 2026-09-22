@@ -31,7 +31,7 @@ async def yahoo_access_token(db: Session) -> str:
             response = await client.post(
                 "https://api.login.yahoo.com/oauth2/get_token",
                 headers={"Authorization": f"Basic {basic}"},
-                data={"grant_type": "refresh_token", "redirect_uri": settings.yahoo_redirect_uri, "refresh_token": refresh_token},
+                data={"grant_type": "refresh_token", "redirect_uri": settings.effective_yahoo_redirect_uri, "refresh_token": refresh_token},
             )
             response.raise_for_status()
             token = response.json()
