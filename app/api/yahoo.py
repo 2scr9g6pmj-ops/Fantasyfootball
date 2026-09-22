@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.models import PlatformCredential
+from app.services.yahoo_auth import YahooNotConnected, yahoo_access_token
+from app.services.yahoo_client import YahooAPIError, YahooClient
+from app.services.yahoo_sync_service import YahooSyncService
 
 router = APIRouter(prefix="/api/platforms/yahoo", tags=["Yahoo"])
 
@@ -45,14 +48,36 @@ async def callback(code: str, state: str = Query(...), db: Session = Depends(get
     try: URLSafeTimedSerializer(settings.app_encryption_key, salt="yahoo-oauth").loads(state, max_age=600)
     except BadSignature as exc: raise HTTPException(400, "Invalid or expired OAuth state") from exc
     basic = base64.b64encode(f"{settings.yahoo_client_id}:{settings.yahoo_client_secret}".encode()).decode()
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post("https://api.login.yahoo.com/oauth2/get_token", headers={"Authorization": f"Basic {basic}"}, data={"grant_type": "authorization_code", "redirect_uri": settings.yahoo_redirect_uri, "code": code})
-        if response.is_error: raise HTTPException(502, "Yahoo token exchange failed")
-        token = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post("https://api.login.yahoo.com/oauth2/get_token", headers={"Authorization": f"Basic {basic}"}, data={"grant_type": "authorization_code", "redirect_uri": settings.yahoo_redirect_uri, "code": code})
+            if response.is_error:
+                raise HTTPException(502, "Yahoo rejected the authorization code. Please connect Yahoo again.")
+            token = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Could not reach Yahoo. Please try connecting again.") from exc
     cipher = Fernet(settings.app_encryption_key.encode())
     credential = db.get(PlatformCredential, "yahoo") or PlatformCredential(platform="yahoo", access_token_encrypted="")
     credential.access_token_encrypted = cipher.encrypt(token["access_token"].encode()).decode()
     if token.get("refresh_token"): credential.refresh_token_encrypted = cipher.encrypt(token["refresh_token"].encode()).decode()
+    credential.account_id = token.get("xoauth_yahoo_guid") or credential.account_id
     credential.expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=int(token.get("expires_in", 3600)))
     db.add(credential); db.commit()
     return RedirectResponse("/?yahoo=connected")
+
+
+@router.post("/sync")
+async def sync(db: Session = Depends(get_db)):
+    try:
+        token = await yahoo_access_token(db)
+        client = YahooClient(token)
+        try:
+            return await YahooSyncService(db, client).sync()
+        finally:
+            await client.close()
+    except YahooNotConnected as exc:
+        raise HTTPException(401, str(exc)) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Could not reach Yahoo Fantasy Sports") from exc

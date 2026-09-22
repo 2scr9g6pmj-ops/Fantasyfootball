@@ -23,6 +23,7 @@ class User(Base):
 class League(Base):
     __tablename__ = "leagues"
     league_id: Mapped[str] = mapped_column(String, primary_key=True)
+    platform: Mapped[str] = mapped_column(String, default="sleeper", index=True)
     name: Mapped[str] = mapped_column(String)
     season: Mapped[str] = mapped_column(String, index=True)
     total_rosters: Mapped[int] = mapped_column(Integer, default=0)

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/fantasyfootball.db"
     yahoo_client_id: str | None = None
     yahoo_client_secret: str | None = None
-    yahoo_redirect_uri: str = "http://127.0.0.1:8000/api/platforms/yahoo/callback"
+    yahoo_redirect_uri: str = "https://localhost:8000/api/platforms/yahoo/callback"
     app_encryption_key: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

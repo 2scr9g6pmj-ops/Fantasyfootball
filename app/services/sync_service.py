@@ -92,6 +92,7 @@ class SyncService:
     def _upsert_league(self, data: dict[str, Any]) -> None:
         league_id = str(data["league_id"])
         row = self.db.get(League, league_id) or League(league_id=league_id, name=data.get("name") or league_id, season=str(data.get("season") or ""))
+        row.platform = "sleeper"
         for key in ("name", "status", "season_type", "draft_id", "previous_league_id"):
             setattr(row, key, data.get(key))
         row.season = str(data.get("season") or "")
