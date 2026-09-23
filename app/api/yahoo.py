@@ -76,7 +76,7 @@ async def callback(code: str | None = None, state: str | None = None, error: str
         row.token_expires_at = token_expiry(tokens); row.league_mappings = mappings; row.status = "connected"; row.last_error = None; db.commit()
     except (YahooAPIError, KeyError) as exc:
         row.status = "error"; row.last_error = str(exc); db.commit()
-        return RedirectResponse(f"/draft?yahoo_error=connection_failed")
+        return RedirectResponse(f"/draft?yahoo_connection={row.id}&yahoo_error=connection_failed")
     finally: await client.close()
     return RedirectResponse(f"/draft?yahoo_connection={row.id}")
 
