@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 import base64
+import hashlib
 import hmac
+from urllib.parse import parse_qs
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import router
@@ -17,8 +19,22 @@ from app.config import get_settings
 class BasicAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         settings = get_settings()
-        if not settings.app_access_username or not settings.app_access_password or request.url.path == "/health":
+        if (
+            not settings.app_access_username
+            or not settings.app_access_password
+            or request.url.path in {"/health", "/login"}
+        ):
             return await call_next(request)
+
+        expected_session = hmac.new(
+            settings.app_access_password.encode(),
+            settings.app_access_username.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        session = request.cookies.get("fantasyfootball_session", "")
+        if hmac.compare_digest(session, expected_session):
+            return await call_next(request)
+
         authorization = request.headers.get("Authorization", "")
         try:
             scheme, encoded = authorization.split(" ", 1)
@@ -27,7 +43,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             scheme = username = password = ""
         valid = scheme.lower() == "basic" and hmac.compare_digest(username, settings.app_access_username) and hmac.compare_digest(password, settings.app_access_password)
         if not valid:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Fantasy Football"'})
+            if request.url.path.startswith("/api/"):
+                return Response(status_code=401)
+            return RedirectResponse("/login", status_code=303)
         return await call_next(request)
 
 
@@ -53,6 +71,38 @@ app.include_router(yahoo_router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(error: str | None = None):
+    message = "<p class='error'>Incorrect username or password.</p>" if error else ""
+    return f"""<!doctype html><html><head><title>Lineup Assistant Login</title><meta name='viewport' content='width=device-width'>
+    <style>body{{font:16px system-ui;background:#0b1220;color:#e5edf7;display:grid;place-items:center;min-height:100vh;margin:0}}form{{background:#121d31;padding:2rem;border-radius:14px;width:min(360px,80vw)}}input,button{{box-sizing:border-box;width:100%;padding:.8rem;margin:.45rem 0;border-radius:8px;border:1px solid #405170}}input{{background:#17233a;color:white}}button{{background:#3478db;color:white;cursor:pointer}}.error{{color:#ff8d8d}}</style></head>
+    <body><form method='post'><h1>Lineup Assistant</h1>{message}<label>Username<input name='username' autocomplete='username' required></label><label>Password<input name='password' type='password' autocomplete='current-password' required></label><button type='submit'>Sign in</button></form></body></html>"""
+
+
+@app.post("/login")
+async def login(request: Request):
+    settings = get_settings()
+    form = parse_qs((await request.body()).decode())
+    username = form.get("username", [""])[0]
+    password = form.get("password", [""])[0]
+    if not (
+        hmac.compare_digest(username, settings.app_access_username)
+        and hmac.compare_digest(password, settings.app_access_password)
+    ):
+        return RedirectResponse("/login?error=1", status_code=303)
+    session = hmac.new(password.encode(), username.encode(), hashlib.sha256).hexdigest()
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        "fantasyfootball_session",
+        session,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
