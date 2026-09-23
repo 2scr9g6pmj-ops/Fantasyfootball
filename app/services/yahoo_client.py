@@ -115,7 +115,7 @@ class YahooClient:
 
     def authorization_url(self, connection_id: str) -> str:
         require_yahoo_settings(self.settings)
-        return f"{self.settings.yahoo_auth_url}?{urlencode({'client_id': self.settings.yahoo_client_id, 'redirect_uri': self.settings.effective_yahoo_redirect_uri, 'response_type': 'code', 'state': make_state(connection_id, self.settings.yahoo_client_secret), 'language': 'en-us'})}"
+        return f"{self.settings.yahoo_auth_url}?{urlencode({'client_id': self.settings.yahoo_client_id, 'redirect_uri': self.settings.effective_yahoo_redirect_uri, 'response_type': 'code', 'scope': 'fspt-r', 'state': make_state(connection_id, self.settings.yahoo_client_secret), 'language': 'en-us'})}"
 
     async def exchange_code(self, code: str) -> dict[str, Any]:
         response = await self.client.post(self.settings.yahoo_token_url, auth=(self.settings.yahoo_client_id, self.settings.yahoo_client_secret),
@@ -131,7 +131,10 @@ class YahooClient:
 
     async def get(self, path: str, token: str) -> str:
         response = await self.client.get(f"{self.settings.yahoo_fantasy_base_url}{path}", headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"})
-        if response.is_error: raise YahooAPIError(f"Yahoo Fantasy request failed ({response.status_code})")
+        if response.is_error:
+            detail = " ".join(response.text.split())[:300]
+            suffix = f": {detail}" if detail else ""
+            raise YahooAPIError(f"Yahoo Fantasy request failed ({response.status_code}){suffix}")
         return response.text
 
     async def leagues(self, token: str) -> list[dict[str, Any]]:
