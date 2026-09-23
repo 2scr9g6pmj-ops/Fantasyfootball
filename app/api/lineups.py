@@ -97,16 +97,24 @@ def _lineup_changes(
 
 def _load_or_fetch_projections(
     league: League, week: int, db: Session, refresh: bool = False
-) -> tuple[dict[str, dict[str, float]], str]:
+) -> tuple[dict[str, dict[str, dict[str, float]]], str]:
     query = select(WeeklyPlayerProjection).where(
         WeeklyPlayerProjection.league_id == league.league_id,
         WeeklyPlayerProjection.week == week,
     )
     rows = list(db.scalars(query))
     if rows and not refresh:
-        return {
-            row.data.get("player_id"): row.data.get("stats", {}) for row in rows
-        }, rows[0].data.get("source", "stored")
+        sources: dict[str, dict[str, dict[str, float]]] = {}
+        for row in rows:
+            source = row.data.get("source", "manual")
+            sources.setdefault(source, {})[row.data.get("player_id")] = row.data.get("stats", {})
+        return sources, ", ".join(sorted(sources))
+
+    source_sets: dict[str, dict[str, dict[str, float]]] = {}
+    for record in rows:
+        source = record.data.get("source", "manual")
+        if source != "sleeper":
+            source_sets.setdefault(source, {})[record.data.get("player_id")] = record.data.get("stats", {})
 
     provider = SleeperProjectionProvider(get_settings().sleeper_projection_base_url)
     try:
@@ -114,9 +122,9 @@ def _load_or_fetch_projections(
     finally:
         provider.close()
     if refresh:
-        db.query(WeeklyPlayerProjection).filter_by(
-            league_id=league.league_id, week=week
-        ).delete()
+        for record in rows:
+            if record.data.get("source") == "sleeper":
+                db.delete(record)
     for player_id, stats in projections.items():
         db.add(WeeklyPlayerProjection(
             league_id=league.league_id,
@@ -124,7 +132,22 @@ def _load_or_fetch_projections(
             data={"player_id": player_id, "stats": stats, "source": "sleeper"},
         ))
     db.commit()
-    return projections, "sleeper"
+    source_sets["sleeper"] = projections
+    return source_sets, ", ".join(sorted(source_sets))
+
+
+def _scored_projection_consensus(
+    player_id: str,
+    projection_sets: dict[str, dict[str, dict[str, float]]],
+    scoring_settings: dict[str, float],
+) -> tuple[float, float | None, dict[str, float]]:
+    source_points = {
+        source: fantasy_points(players[player_id], scoring_settings)
+        for source, players in projection_sets.items()
+        if player_id in players
+    }
+    aggregate = round(sum(source_points.values()) / len(source_points), 2) if source_points else 0.0
+    return aggregate, source_points.get("sleeper"), source_points
 
 
 @router.get("/leagues/{league_id}/recommendations/{week}")
@@ -134,17 +157,23 @@ def recommendations(league_id: str, week: int, profile: str = Query("balanced", 
     if not league or not roster: raise HTTPException(404, "League or primary roster not found")
     rows = list(db.scalars(select(RosterPlayer).where(RosterPlayer.league_id == league_id, RosterPlayer.roster_id == roster.roster_id)))
     try:
-        projections, projection_source = _load_or_fetch_projections(league, week, db)
+        projection_sets, projection_source = _load_or_fetch_projections(league, week, db)
     except Exception:
-        projections, projection_source = {}, "unavailable"
+        projection_sets, projection_source = {}, "unavailable"
     candidates, details = [], {}
     for row in rows:
         player = db.get(NFLPlayer, row.player_id)
-        points = fantasy_points(projections.get(row.player_id, {}), league.scoring_settings)
-        decision = decision_breakdown(points, player.injury_status, profile, projections.get(row.player_id, {}))
+        points, sleeper_points, source_points = _scored_projection_consensus(
+            row.player_id, projection_sets, league.scoring_settings
+        )
+        context = next(
+            (players[row.player_id] for players in projection_sets.values() if row.player_id in players),
+            {},
+        )
+        decision = decision_breakdown(points, player.injury_status, profile, context)
         score = decision["decision_score"]
         candidates.append(Candidate(row.player_id, player.position or "", points, score))
-        details[row.player_id] = {"name": player.full_name, "team": player.team, "position": player.position, "injury": player.injury_status, "current": row.is_starter, "decision": decision}
+        details[row.player_id] = {"name": player.full_name, "team": player.team, "position": player.position, "injury": player.injury_status, "current": row.is_starter, "decision": decision, "sleeper_projection": sleeper_points, "aggregate_projection": points, "projection_sources": source_points}
     lineup = optimize(league.roster_positions, candidates)
     current_ids = {r.player_id for r in rows if r.is_starter}
     recommended_ids = {p[1].player_id for p in lineup}
@@ -167,15 +196,22 @@ def sync_weekly_projections(league_id: str, week: int, db: Session = Depends(get
     if not league:
         raise HTTPException(404, "League not found")
     try:
-        projections, source = _load_or_fetch_projections(league, week, db, refresh=True)
+        projection_sets, source = _load_or_fetch_projections(league, week, db, refresh=True)
     except Exception as exc:
         raise HTTPException(502, f"Projection provider failed: {exc}") from exc
-    return {"league_id": league_id, "week": week, "source": source, "players": len(projections)}
+    players = {player_id for values in projection_sets.values() for player_id in values}
+    return {"league_id": league_id, "week": week, "source": source, "players": len(players)}
 
 
 @router.post("/leagues/{league_id}/projections/{week}/csv")
 def import_csv(league_id: str, week: int, rows: list[dict], db: Session = Depends(get_db)):
-    db.query(WeeklyPlayerProjection).filter_by(league_id=league_id, week=week).delete()
+    existing = db.scalars(select(WeeklyPlayerProjection).where(
+        WeeklyPlayerProjection.league_id == league_id,
+        WeeklyPlayerProjection.week == week,
+    ))
+    for record in existing:
+        if record.data.get("source", "manual") == "manual":
+            db.delete(record)
     for row in rows:
-        player_id = str(row.pop("player_id")); db.add(WeeklyPlayerProjection(league_id=league_id, week=week, data={"player_id": player_id, "stats": row}))
+        player_id = str(row.pop("player_id")); db.add(WeeklyPlayerProjection(league_id=league_id, week=week, data={"player_id": player_id, "stats": row, "source": "manual"}))
     db.commit(); return {"imported": len(rows)}

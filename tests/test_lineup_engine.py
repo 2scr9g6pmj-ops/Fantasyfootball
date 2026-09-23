@@ -2,6 +2,7 @@ from app.services.lineup_optimizer import Candidate, eligible_for_slot, optimize
 from app.services.recommendation_engine import start_score
 from app.services.scoring_engine import fantasy_points
 from app.services.projection_provider import SleeperProjectionProvider
+from app.api.lineups import _scored_projection_consensus
 import httpx
 
 
@@ -57,3 +58,17 @@ def test_sleeper_projection_provider_returns_projected_stats():
     assert provider.projections(3, "2026") == {
         "p1": {"pass_yd": 275.0, "pass_td": 2.0}
     }
+
+
+def test_projection_consensus_keeps_sleeper_and_averages_sources():
+    aggregate, sleeper, sources = _scored_projection_consensus(
+        "p1",
+        {
+            "sleeper": {"p1": {"rush_yd": 100}},
+            "manual": {"p1": {"rush_yd": 80}},
+        },
+        {"rush_yd": 0.1},
+    )
+    assert aggregate == 9
+    assert sleeper == 10
+    assert sources == {"sleeper": 10, "manual": 8}
