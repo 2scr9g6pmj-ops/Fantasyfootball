@@ -15,3 +15,10 @@ def test_home_csv_parser_keeps_javascript_newline_escapes():
     assert "c==='\\n'" in html
     assert "c==='\\r'" in html
     assert "c==='\n'" not in html
+
+
+def test_home_displays_complete_roster_projection_table():
+    html = home()
+    assert "Your players" in html
+    assert "roster_players" in html
+    assert "player.comment" in html

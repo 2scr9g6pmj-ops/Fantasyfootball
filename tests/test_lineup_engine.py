@@ -2,7 +2,7 @@ from app.services.lineup_optimizer import Candidate, eligible_for_slot, optimize
 from app.services.recommendation_engine import start_score
 from app.services.scoring_engine import fantasy_points
 from app.services.projection_provider import SleeperProjectionProvider
-from app.api.lineups import _scored_projection_consensus
+from app.api.lineups import _roster_comment, _scored_projection_consensus
 import httpx
 
 
@@ -90,3 +90,20 @@ def test_projection_consensus_combines_sleeper_stats_and_espn_points():
     assert aggregate == 12
     assert sleeper == 10
     assert sources == {"sleeper": 10, "espn": 14}
+
+
+def test_roster_comment_covers_starters_and_bench_close_calls():
+    starter = Candidate("start", "QB", 16.0, 80.0)
+    bench = Candidate("bench", "QB", 15.0, 75.0)
+    details = {
+        "start": {"name": "Starter", "injury": None},
+        "bench": {"name": "Bench", "injury": "Questionable"},
+    }
+    lineup = [("QB", starter)]
+
+    assert "Keep in your current lineup" in _roster_comment(
+        starter, {"start"}, {"start"}, details, lineup
+    )
+    bench_comment = _roster_comment(bench, {"start"}, {"start"}, details, lineup)
+    assert "Close call, but bench" in bench_comment
+    assert "Starter holds the QB edge" in bench_comment

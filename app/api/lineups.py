@@ -99,6 +99,50 @@ def _lineup_changes(
     return changes
 
 
+def _roster_comment(
+    candidate: Candidate,
+    recommended_ids: set[str],
+    current_ids: set[str],
+    details: dict,
+    lineup: list[tuple[str, Candidate]],
+) -> str:
+    player = details[candidate.player_id]
+    health = player["injury"] or "healthy"
+    if candidate.player_id in recommended_ids:
+        slot = next(slot for slot, selected in lineup if selected.player_id == candidate.player_id)
+        status = "Keep in your current lineup" if candidate.player_id in current_ids else "Move into your lineup"
+        return (
+            f"{status} at {slot}. The model gives {player['name']} a "
+            f"{candidate.projection:.2f}-point aggregate projection and a "
+            f"{candidate.start_score:.1f} decision score; current availability is {health}."
+        )
+
+    eligible_starters = [
+        (slot, selected)
+        for slot, selected in lineup
+        if eligible_for_slot(slot, candidate.position)
+    ]
+    if not eligible_starters:
+        return (
+            f"Bench for now. {player['name']} has a {candidate.projection:.2f}-point "
+            f"aggregate projection and no compatible starting slot in this lineup; "
+            f"current availability is {health}."
+        )
+    slot, starter = min(
+        eligible_starters,
+        key=lambda item: (item[1].start_score, item[1].projection),
+    )
+    starter_details = details[starter.player_id]
+    projection_gap = round(starter.projection - candidate.projection, 2)
+    score_gap = round(starter.start_score - candidate.start_score, 1)
+    close = abs(projection_gap) <= 2 or abs(score_gap) <= 8
+    return (
+        f"{'Close call, but bench' if close else 'Bench'} {player['name']} for now. "
+        f"{starter_details['name']} holds the {slot} edge by {projection_gap:+.2f} projected "
+        f"points and {score_gap:+.1f} decision-score points; {player['name']} is {health}."
+    )
+
+
 def _load_or_fetch_projections(
     league: League, week: int, db: Session, refresh: bool = False
 ) -> tuple[dict[str, dict[str, dict[str, float]]], str]:
@@ -192,7 +236,27 @@ def recommendations(league_id: str, week: int, profile: str = Query("balanced", 
             "projection": player.projection, "start_score": player.start_score,
             "explanation": explanation, "close_call": close_call,
         })
-    return {"league_id": league_id, "week": week, "profile": profile, "projection_source": projection_source, "current_projected_points": round(sum(c.projection for c in candidates if c.player_id in current_ids), 2), "optimized_projected_points": round(sum(p.projection for _, p in lineup), 2), "recommended_lineup": recommended, "changes": _lineup_changes(lineup, current_ids, details)}
+    roster_players = []
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (item.player_id not in recommended_ids, -item.start_score, -item.projection),
+    ):
+        player = details[candidate.player_id]
+        roster_players.append({
+            "player_id": candidate.player_id,
+            "name": player["name"],
+            "team": player["team"],
+            "position": player["position"],
+            "injury": player["injury"],
+            "currently_started": candidate.player_id in current_ids,
+            "recommended_start": candidate.player_id in recommended_ids,
+            "sleeper_projection": player["sleeper_projection"],
+            "aggregate_projection": player["aggregate_projection"],
+            "projection_sources": player["projection_sources"],
+            "start_score": candidate.start_score,
+            "comment": _roster_comment(candidate, recommended_ids, current_ids, details, lineup),
+        })
+    return {"league_id": league_id, "week": week, "profile": profile, "projection_source": projection_source, "current_projected_points": round(sum(c.projection for c in candidates if c.player_id in current_ids), 2), "optimized_projected_points": round(sum(p.projection for _, p in lineup), 2), "recommended_lineup": recommended, "roster_players": roster_players, "changes": _lineup_changes(lineup, current_ids, details)}
 
 
 @router.post("/leagues/{league_id}/projections/{week}/sync")
