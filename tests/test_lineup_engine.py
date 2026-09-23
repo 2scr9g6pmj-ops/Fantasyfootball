@@ -1,4 +1,4 @@
-from app.services.lineup_optimizer import Candidate, optimize
+from app.services.lineup_optimizer import Candidate, eligible_for_slot, optimize
 from app.services.recommendation_engine import start_score
 from app.services.scoring_engine import fantasy_points
 from app.services.projection_provider import SleeperProjectionProvider
@@ -15,6 +15,12 @@ def test_optimizer_respects_flex_and_unique_players():
     players = [Candidate("rb1", "RB", 10, 60), Candidate("rb2", "RB", 9, 55), Candidate("wr1", "WR", 12, 70)]
     lineup = optimize(["RB", "FLEX", "BN"], players)
     assert {p.player_id for _, p in lineup} == {"rb1", "wr1"}
+
+
+def test_slot_eligibility_supports_flex_and_superflex():
+    assert eligible_for_slot("FLEX", "WR")
+    assert eligible_for_slot("SUPER_FLEX", "QB")
+    assert not eligible_for_slot("RB", "WR")
 
 
 def test_optimizer_handles_realistic_roster_and_duplicate_slots():

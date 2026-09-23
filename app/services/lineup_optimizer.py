@@ -7,6 +7,10 @@ ELIGIBLE = {
 }
 
 
+def eligible_for_slot(slot: str, position: str) -> bool:
+    return position == slot or position in ELIGIBLE.get(slot, set())
+
+
 @dataclass
 class Candidate:
     player_id: str
@@ -20,9 +24,6 @@ def optimize(slots: list[str], players: list[Candidate]) -> list[tuple[str, Cand
     slot_types = list(dict.fromkeys(active))
     capacities = tuple(active.count(slot) for slot in slot_types)
 
-    def eligible(slot: str, position: str) -> bool:
-        return position == slot or position in ELIGIBLE.get(slot, set())
-
     # A roster may have 20+ players. Trying every permutation grows factorially
     # and can exhaust a web request. This DP keeps only the best assignment for
     # each set of filled slot counts, so its state space stays very small.
@@ -35,7 +36,7 @@ def optimize(slots: list[str], players: list[Candidate]) -> list[tuple[str, Cand
         next_states = dict(states)
         for counts, (score, assignments) in states.items():
             for index, slot in enumerate(slot_types):
-                if counts[index] >= capacities[index] or not eligible(slot, player.position):
+                if counts[index] >= capacities[index] or not eligible_for_slot(slot, player.position):
                     continue
                 updated = list(counts)
                 updated[index] += 1

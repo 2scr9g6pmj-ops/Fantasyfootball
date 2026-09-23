@@ -5,12 +5,94 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import get_settings
 from app.models import FantasyRoster, League, NFLPlayer, RosterPlayer, WeeklyPlayerProjection
-from app.services.lineup_optimizer import Candidate, optimize
+from app.services.lineup_optimizer import Candidate, eligible_for_slot, optimize
 from app.services.projection_provider import SleeperProjectionProvider
 from app.services.recommendation_engine import decision_breakdown
 from app.services.scoring_engine import fantasy_points
 
 router = APIRouter(prefix="/api")
+
+
+def _explain_selection(
+    slot: str,
+    selected: Candidate,
+    candidates: list[Candidate],
+    recommended_ids: set[str],
+    details: dict,
+    profile: str,
+) -> tuple[str, dict | None]:
+    player = details[selected.player_id]
+    reason = (
+        f"{player['name']} fits the optimal {slot} lineup with a "
+        f"{selected.projection:.2f}-point league-adjusted projection and a "
+        f"{selected.start_score:.1f} {profile} decision score."
+    )
+    alternatives = sorted(
+        (
+            candidate for candidate in candidates
+            if candidate.player_id not in recommended_ids
+            and eligible_for_slot(slot, candidate.position)
+        ),
+        key=lambda candidate: (candidate.start_score, candidate.projection),
+        reverse=True,
+    )
+    if not alternatives:
+        return reason + " There was no eligible bench alternative for this slot.", None
+
+    alternative = alternatives[0]
+    alternative_details = details[alternative.player_id]
+    score_gap = round(selected.start_score - alternative.start_score, 1)
+    projection_gap = round(selected.projection - alternative.projection, 2)
+    close = abs(score_gap) <= 8 or abs(projection_gap) <= 2
+    health_note = ""
+    if player["injury"] != alternative_details["injury"]:
+        selected_health = player["injury"] or "healthy"
+        alternative_health = alternative_details["injury"] or "healthy"
+        health_note = (
+            f" Availability check: {player['name']} is {selected_health}; "
+            f"{alternative_details['name']} is {alternative_health}."
+        )
+    comparison = (
+        f"{'Close call: ' if close else ''}{player['name']} starts over "
+        f"{alternative_details['name']} by {projection_gap:+.2f} projected points "
+        f"and {score_gap:+.1f} decision-score points.{health_note}"
+    )
+    return f"{reason} {comparison}", {
+        "is_close": close,
+        "alternative_player_id": alternative.player_id,
+        "alternative": alternative_details["name"],
+        "projection_gap": projection_gap,
+        "decision_score_gap": score_gap,
+        "explanation": comparison,
+    }
+
+
+def _lineup_changes(
+    lineup: list[tuple[str, Candidate]], current_ids: set[str], details: dict
+) -> list[dict]:
+    recommended_ids = {candidate.player_id for _, candidate in lineup}
+    starts = [candidate for _, candidate in lineup if candidate.player_id not in current_ids]
+    sits = [player_id for player_id in current_ids if player_id not in recommended_ids]
+    changes = []
+    for start in starts:
+        compatible_sits = [
+            player_id for player_id in sits
+            if details[player_id]["position"] == start.position
+        ]
+        sit_id = compatible_sits[0] if compatible_sits else (sits[0] if sits else None)
+        if sit_id:
+            sits.remove(sit_id)
+        changes.append({
+            "start": details[start.player_id]["name"],
+            "sit": details[sit_id]["name"] if sit_id else None,
+            "reason": (
+                f"Start {details[start.player_id]['name']}"
+                + (f" over {details[sit_id]['name']}" if sit_id else "")
+                + f" because the optimized {start.position} option has a "
+                f"{start.projection:.2f}-point projection and {start.start_score:.1f} decision score."
+            ),
+        })
+    return changes
 
 
 def _load_or_fetch_projections(
@@ -64,10 +146,19 @@ def recommendations(league_id: str, week: int, profile: str = Query("balanced", 
         candidates.append(Candidate(row.player_id, player.position or "", points, score))
         details[row.player_id] = {"name": player.full_name, "team": player.team, "position": player.position, "injury": player.injury_status, "current": row.is_starter, "decision": decision}
     lineup = optimize(league.roster_positions, candidates)
-    recommended = [{"slot": slot, **details[p.player_id], "player_id": p.player_id, "projection": p.projection, "start_score": p.start_score} for slot, p in lineup]
     current_ids = {r.player_id for r in rows if r.is_starter}
     recommended_ids = {p[1].player_id for p in lineup}
-    return {"league_id": league_id, "week": week, "profile": profile, "projection_source": projection_source, "current_projected_points": round(sum(c.projection for c in candidates if c.player_id in current_ids), 2), "optimized_projected_points": round(sum(p.projection for _, p in lineup), 2), "recommended_lineup": recommended, "changes": [{"start": details[p]["name"]} for p in recommended_ids-current_ids]}
+    recommended = []
+    for slot, player in lineup:
+        explanation, close_call = _explain_selection(
+            slot, player, candidates, recommended_ids, details, profile
+        )
+        recommended.append({
+            "slot": slot, **details[player.player_id], "player_id": player.player_id,
+            "projection": player.projection, "start_score": player.start_score,
+            "explanation": explanation, "close_call": close_call,
+        })
+    return {"league_id": league_id, "week": week, "profile": profile, "projection_source": projection_source, "current_projected_points": round(sum(c.projection for c in candidates if c.player_id in current_ids), 2), "optimized_projected_points": round(sum(p.projection for _, p in lineup), 2), "recommended_lineup": recommended, "changes": _lineup_changes(lineup, current_ids, details)}
 
 
 @router.post("/leagues/{league_id}/projections/{week}/sync")
