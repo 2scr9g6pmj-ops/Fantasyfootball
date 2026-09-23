@@ -13,6 +13,10 @@ from app.services.scoring_engine import fantasy_points
 router = APIRouter(prefix="/api")
 
 
+def _normalized_player_name(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
 def _explain_selection(
     slot: str,
     selected: Candidate,
@@ -147,7 +151,8 @@ def _scored_projection_consensus(
         if player_id in players
     }
     aggregate = round(sum(source_points.values()) / len(source_points), 2) if source_points else 0.0
-    return aggregate, source_points.get("sleeper"), source_points
+    sleeper_points = source_points.get("sleeper")
+    return aggregate, sleeper_points, source_points
 
 
 @router.get("/leagues/{league_id}/recommendations/{week}")
@@ -204,14 +209,73 @@ def sync_weekly_projections(league_id: str, week: int, db: Session = Depends(get
 
 
 @router.post("/leagues/{league_id}/projections/{week}/csv")
-def import_csv(league_id: str, week: int, rows: list[dict], db: Session = Depends(get_db)):
-    existing = db.scalars(select(WeeklyPlayerProjection).where(
+def import_csv(
+    league_id: str,
+    week: int,
+    rows: list[dict],
+    source: str = Query("manual", pattern="^(sleeper|espn|manual)$"),
+    db: Session = Depends(get_db),
+):
+    if not db.get(League, league_id):
+        raise HTTPException(404, "League not found")
+
+    roster_player_ids = set(db.scalars(select(RosterPlayer.player_id).where(
+        RosterPlayer.league_id == league_id,
+    )))
+    players = list(db.scalars(select(NFLPlayer).where(NFLPlayer.player_id.in_(roster_player_ids))))
+    by_name: dict[str, list[NFLPlayer]] = {}
+    for player in players:
+        by_name.setdefault(_normalized_player_name(player.full_name or ""), []).append(player)
+
+    existing = list(db.scalars(select(WeeklyPlayerProjection).where(
         WeeklyPlayerProjection.league_id == league_id,
         WeeklyPlayerProjection.week == week,
-    ))
+    )))
     for record in existing:
-        if record.data.get("source", "manual") == "manual":
+        if record.data.get("source", "manual") == source:
             db.delete(record)
-    for row in rows:
-        player_id = str(row.pop("player_id")); db.add(WeeklyPlayerProjection(league_id=league_id, week=week, data={"player_id": player_id, "stats": row, "source": "manual"}))
-    db.commit(); return {"imported": len(rows)}
+
+    imported = 0
+    unmatched: list[str] = []
+    for original in rows:
+        row = {str(key).strip().casefold(): value for key, value in original.items()}
+        player_id = str(row.pop("player_id", "") or "").strip()
+        player_name = str(row.pop("player", row.pop("name", "")) or "").strip()
+        team = str(row.pop("team", "") or "").strip().upper()
+        row.pop("position", None)
+        row.pop("week", None)
+        if not player_id and player_name:
+            matches = by_name.get(_normalized_player_name(player_name), [])
+            if team:
+                matches = [player for player in matches if (player.team or "").upper() == team]
+            if len(matches) == 1:
+                player_id = matches[0].player_id
+        if not player_id or player_id not in roster_player_ids:
+            unmatched.append(player_name or player_id or "Unknown player")
+            continue
+
+        projection = row.pop(
+            "projection",
+            row.pop("projected_points", row.pop("proj", row.pop("fantasy_points", None))),
+        )
+        try:
+            stats = (
+                {"fantasy_points": float(projection)}
+                if projection not in (None, "")
+                else {
+                    key: float(value or 0)
+                    for key, value in row.items()
+                    if value not in (None, "")
+                }
+            )
+        except (TypeError, ValueError):
+            unmatched.append(player_name or player_id)
+            continue
+        db.add(WeeklyPlayerProjection(
+            league_id=league_id,
+            week=week,
+            data={"player_id": player_id, "stats": stats, "source": source},
+        ))
+        imported += 1
+    db.commit()
+    return {"imported": imported, "unmatched": unmatched, "source": source}

@@ -12,6 +12,10 @@ def test_league_scoring_changes_projection():
     assert fantasy_points(stats, {"pass_yd": .05, "pass_td": 6, "int": -1}) == 26
 
 
+def test_provider_scored_projection_is_preserved():
+    assert fantasy_points({"fantasy_points": 17.35}, {"pass_td": 6}) == 17.35
+
+
 def test_optimizer_respects_flex_and_unique_players():
     players = [Candidate("rb1", "RB", 10, 60), Candidate("rb2", "RB", 9, 55), Candidate("wr1", "WR", 12, 70)]
     lineup = optimize(["RB", "FLEX", "BN"], players)
@@ -72,3 +76,17 @@ def test_projection_consensus_keeps_sleeper_and_averages_sources():
     assert aggregate == 9
     assert sleeper == 10
     assert sources == {"sleeper": 10, "manual": 8}
+
+
+def test_projection_consensus_combines_sleeper_stats_and_espn_points():
+    aggregate, sleeper, sources = _scored_projection_consensus(
+        "p1",
+        {
+            "sleeper": {"p1": {"rush_yd": 100}},
+            "espn": {"p1": {"fantasy_points": 14}},
+        },
+        {"rush_yd": 0.1},
+    )
+    assert aggregate == 12
+    assert sleeper == 10
+    assert sources == {"sleeper": 10, "espn": 14}
