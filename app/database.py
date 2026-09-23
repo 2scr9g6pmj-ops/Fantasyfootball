@@ -16,11 +16,21 @@ def _ensure_sqlite_directory(url: str) -> None:
         Path(url.removeprefix(prefix)).parent.mkdir(parents=True, exist_ok=True)
 
 
+def _normalize_database_url(url: str) -> str:
+    """Use the installed psycopg v3 driver for generic PostgreSQL URLs."""
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    return url
+
+
 settings = get_settings()
 _ensure_sqlite_directory(settings.database_url)
+database_url = _normalize_database_url(settings.database_url)
 engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+    database_url,
+    connect_args={"check_same_thread": False} if database_url.startswith("sqlite") else {},
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
