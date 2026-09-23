@@ -144,3 +144,12 @@ def test_espn_match_requires_team_and_handles_suffixes():
         {"name": "Travis Etienne Jr.", "team": "MIA", "position": "RB"},
         [saints, jaguars],
     ) is None
+
+
+def test_espn_match_uses_team_to_disambiguate_full_catalog():
+    miami = NFLPlayer(player_id="mia", full_name="Alex Smith", team="MIA", position="QB", fantasy_positions=["QB"])
+    atlanta = NFLPlayer(player_id="atl", full_name="Alex Smith", team="ATL", position="QB", fantasy_positions=["QB"])
+    assert _match_espn_player(
+        {"name": "Alex Smith", "team": "ATL", "position": "QB"},
+        [miami, atlanta],
+    ).player_id == "atl"

@@ -1,6 +1,7 @@
 from difflib import SequenceMatcher
 import unicodedata
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -234,7 +235,24 @@ def _fetch_espn_projections(league: League, week: int, db: Session) -> dict:
         records = provider.projections(week, league.season)
     finally:
         provider.close()
-    players = list(db.scalars(select(NFLPlayer)))
+    players_by_id = {
+        player.player_id: player for player in db.scalars(select(NFLPlayer))
+    }
+    sleeper_response = httpx.get("https://api.sleeper.app/v1/players/nfl", timeout=60)
+    sleeper_response.raise_for_status()
+    for player_id, data in sleeper_response.json().items():
+        if player_id in players_by_id:
+            continue
+        position = data.get("position")
+        fantasy_positions = data.get("fantasy_positions") or ([position] if position else [])
+        players_by_id[player_id] = NFLPlayer(
+            player_id=player_id,
+            full_name=data.get("full_name") or " ".join(filter(None, [data.get("first_name"), data.get("last_name")])),
+            team=data.get("team"),
+            position=position,
+            fantasy_positions=fantasy_positions,
+        )
+    players = list(players_by_id.values())
     existing = list(db.scalars(select(WeeklyPlayerProjection).where(
         WeeklyPlayerProjection.league_id == league.league_id,
         WeeklyPlayerProjection.week == week,
