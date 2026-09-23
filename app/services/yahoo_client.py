@@ -58,6 +58,19 @@ def _text(node: ET.Element | None, name: str) -> str | None:
     return child.text if child is not None else None
 
 
+def yahoo_error_detail(body: str) -> str:
+    """Return Yahoo's useful XML error fields without dumping the whole response."""
+    try:
+        root = ET.fromstring(body)
+        parts = [_text(root, name) for name in ("description", "detail")]
+        detail = " — ".join(part.strip() for part in parts if part and part.strip())
+        if detail:
+            return detail[:1000]
+    except ET.ParseError:
+        pass
+    return " ".join(body.split())[:1000]
+
+
 def parse_leagues(xml: str) -> list[dict[str, Any]]:
     root = ET.fromstring(xml)
     results = []
@@ -132,7 +145,7 @@ class YahooClient:
     async def get(self, path: str, token: str) -> str:
         response = await self.client.get(f"{self.settings.yahoo_fantasy_base_url}{path}", headers={"Authorization": f"Bearer {token}", "Accept": "application/xml"})
         if response.is_error:
-            detail = " ".join(response.text.split())[:300]
+            detail = yahoo_error_detail(response.text)
             suffix = f": {detail}" if detail else ""
             raise YahooAPIError(f"Yahoo Fantasy request failed ({response.status_code}){suffix}")
         return response.text
