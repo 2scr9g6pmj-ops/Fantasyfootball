@@ -115,7 +115,7 @@ class YahooClient:
 
     def authorization_url(self, connection_id: str) -> str:
         require_yahoo_settings(self.settings)
-        return f"{self.settings.yahoo_auth_url}?{urlencode({'client_id': self.settings.yahoo_client_id, 'redirect_uri': self.settings.effective_yahoo_redirect_uri, 'response_type': 'code', 'scope': 'fspt-r', 'state': make_state(connection_id, self.settings.yahoo_client_secret), 'language': 'en-us'})}"
+        return f"{self.settings.yahoo_auth_url}?{urlencode({'client_id': self.settings.yahoo_client_id, 'redirect_uri': self.settings.effective_yahoo_redirect_uri, 'response_type': 'code', 'scope': 'fspt-r', 'prompt': 'consent', 'state': make_state(connection_id, self.settings.yahoo_client_secret), 'language': 'en-us'})}"
 
     async def exchange_code(self, code: str) -> dict[str, Any]:
         response = await self.client.post(self.settings.yahoo_token_url, auth=(self.settings.yahoo_client_id, self.settings.yahoo_client_secret),
