@@ -1,3 +1,6 @@
+from difflib import SequenceMatcher
+import unicodedata
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -7,6 +10,7 @@ from app.config import get_settings
 from app.models import FantasyRoster, League, NFLPlayer, RosterPlayer, WeeklyPlayerProjection
 from app.services.lineup_optimizer import Candidate, eligible_for_slot, optimize
 from app.services.projection_provider import SleeperProjectionProvider
+from app.services.espn_projection_provider import ESPNProjectionProvider
 from app.services.recommendation_engine import decision_breakdown
 from app.services.scoring_engine import fantasy_points
 
@@ -14,7 +18,47 @@ router = APIRouter(prefix="/api")
 
 
 def _normalized_player_name(value: str) -> str:
-    return "".join(character for character in value.casefold() if character.isalnum())
+    ascii_name = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    tokens = [
+        token for token in "".join(
+            character if character.isalnum() else " " for character in ascii_name.casefold()
+        ).split()
+        if token not in {"jr", "sr", "ii", "iii", "iv", "v"}
+    ]
+    return "".join(tokens)
+
+
+def _normalized_team(value: str | None) -> str:
+    aliases = {"JAC": "JAX", "LA": "LAR", "STL": "LAR", "OAK": "LV", "WAS": "WSH"}
+    team = (value or "").strip().upper()
+    return aliases.get(team, team)
+
+
+def _match_espn_player(record: dict, players: list[NFLPlayer]) -> NFLPlayer | None:
+    """Match ESPN to Sleeper using team plus exact/safely fuzzy normalized name."""
+    team = _normalized_team(record.get("team"))
+    position = record.get("position")
+    candidates = [
+        player for player in players
+        if _normalized_team(player.team) == team
+        and (not position or position in (player.fantasy_positions or []) or player.position == position)
+    ]
+    target = _normalized_player_name(record.get("name") or "")
+    exact = [player for player in candidates if _normalized_player_name(player.full_name or "") == target]
+    if len(exact) == 1:
+        return exact[0]
+    scored = sorted((
+        (
+            SequenceMatcher(None, target, _normalized_player_name(player.full_name or "")).ratio(),
+            player,
+        )
+        for player in candidates
+    ), key=lambda item: item[0])
+    if not scored or scored[-1][0] < 0.92:
+        return None
+    if len(scored) > 1 and scored[-1][0] - scored[-2][0] < 0.05:
+        return None
+    return scored[-1][1]
 
 
 def _explain_selection(
@@ -184,6 +228,54 @@ def _load_or_fetch_projections(
     return source_sets, ", ".join(sorted(source_sets))
 
 
+def _fetch_espn_projections(league: League, week: int, db: Session) -> dict:
+    provider = ESPNProjectionProvider(get_settings().espn_projection_base_url)
+    try:
+        records = provider.projections(week, league.season)
+    finally:
+        provider.close()
+    players = list(db.scalars(select(NFLPlayer)))
+    existing = list(db.scalars(select(WeeklyPlayerProjection).where(
+        WeeklyPlayerProjection.league_id == league.league_id,
+        WeeklyPlayerProjection.week == week,
+    )))
+    for record in existing:
+        if record.data.get("source") == "espn":
+            db.delete(record)
+
+    imported = 0
+    unmatched = []
+    for record in records:
+        player = _match_espn_player(record, players)
+        if not player:
+            unmatched.append({
+                "name": record["name"], "team": record["team"],
+                "position": record["position"],
+            })
+            continue
+        db.add(WeeklyPlayerProjection(
+            league_id=league.league_id,
+            week=week,
+            data={
+                "player_id": player.player_id,
+                "stats": record["stats"],
+                "source": "espn",
+                "provider_player_id": record["espn_id"],
+                "provider_name": record["name"],
+                "provider_team": record["team"],
+                "outlook": record.get("outlook"),
+            },
+        ))
+        imported += 1
+    db.commit()
+    return {
+        "source_players": len(records),
+        "imported": imported,
+        "unmatched_count": len(unmatched),
+        "unmatched": unmatched[:50],
+    }
+
+
 def _scored_projection_consensus(
     player_id: str,
     projection_sets: dict[str, dict[str, dict[str, float]]],
@@ -343,3 +435,19 @@ def import_csv(
         imported += 1
     db.commit()
     return {"imported": imported, "unmatched": unmatched, "source": source}
+
+
+@router.post("/leagues/{league_id}/projections/{week}/espn/sync")
+def sync_espn_projections(
+    league_id: str,
+    week: int,
+    db: Session = Depends(get_db),
+):
+    league = db.get(League, league_id)
+    if not league:
+        raise HTTPException(404, "League not found")
+    try:
+        result = _fetch_espn_projections(league, week, db)
+    except Exception as exc:
+        raise HTTPException(502, f"ESPN projection provider failed: {exc}") from exc
+    return {"league_id": league_id, "week": week, **result}

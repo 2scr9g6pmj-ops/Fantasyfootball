@@ -2,7 +2,9 @@ from app.services.lineup_optimizer import Candidate, eligible_for_slot, optimize
 from app.services.recommendation_engine import start_score
 from app.services.scoring_engine import fantasy_points
 from app.services.projection_provider import SleeperProjectionProvider
-from app.api.lineups import _roster_comment, _scored_projection_consensus
+from app.api.lineups import _match_espn_player, _roster_comment, _scored_projection_consensus
+from app.models import NFLPlayer
+from app.services.espn_projection_provider import ESPNProjectionProvider
 import httpx
 
 
@@ -107,3 +109,38 @@ def test_roster_comment_covers_starters_and_bench_close_calls():
     bench_comment = _roster_comment(bench, {"start"}, {"start"}, details, lineup)
     assert "Close call, but bench" in bench_comment
     assert "Starter holds the QB edge" in bench_comment
+
+
+def test_espn_provider_returns_all_active_weekly_players():
+    def handler(request):
+        assert request.url.params["scoringPeriodId"] == "3"
+        return httpx.Response(200, json=[
+            {
+                "active": True, "defaultPositionId": 2, "fullName": "Travis Etienne Jr.",
+                "id": 1, "proTeamId": 18,
+                "stats": [{"seasonId": 2026, "scoringPeriodId": 3, "statSourceId": 1,
+                           "statSplitTypeId": 1, "stats": {"24": 50, "25": .5, "53": 3}}],
+                "outlooks": {"outlooksByWeek": {"3": "Weekly outlook"}},
+            },
+            {"active": False, "defaultPositionId": 2, "fullName": "Retired Player",
+             "id": 2, "proTeamId": 18, "stats": []},
+        ])
+
+    provider = ESPNProjectionProvider("https://example.test/ffl", httpx.Client(transport=httpx.MockTransport(handler)))
+    assert provider.projections(3, "2026") == [{
+        "espn_id": "1", "name": "Travis Etienne Jr.", "team": "NO", "position": "RB",
+        "stats": {"rush_yd": 50.0, "rush_td": .5, "rec": 3.0}, "outlook": "Weekly outlook",
+    }]
+
+
+def test_espn_match_requires_team_and_handles_suffixes():
+    saints = NFLPlayer(player_id="s1", full_name="Travis Etienne", team="NO", position="RB", fantasy_positions=["RB"])
+    jaguars = NFLPlayer(player_id="s2", full_name="Travis Etienne", team="JAX", position="RB", fantasy_positions=["RB"])
+    assert _match_espn_player(
+        {"name": "Travis Etienne Jr.", "team": "NO", "position": "RB"},
+        [saints, jaguars],
+    ) is saints
+    assert _match_espn_player(
+        {"name": "Travis Etienne Jr.", "team": "MIA", "position": "RB"},
+        [saints, jaguars],
+    ) is None

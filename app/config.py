@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     sleeper_season: str | None = None
     sleeper_base_url: str = "https://api.sleeper.app/v1"
     sleeper_projection_base_url: str = "https://api.sleeper.com/projections/nfl"
+    espn_projection_base_url: str = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
     database_url: str = "sqlite:///./data/fantasyfootball.db"
     yahoo_client_id: str | None = None
     yahoo_client_secret: str | None = None

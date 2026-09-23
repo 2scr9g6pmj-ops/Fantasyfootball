@@ -22,3 +22,4 @@ def test_home_displays_complete_roster_projection_table():
     assert "Your players" in html
     assert "roster_players" in html
     assert "player.comment" in html
+    assert "Fetch all ESPN players" in html
