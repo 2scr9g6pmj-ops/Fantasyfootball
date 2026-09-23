@@ -49,15 +49,22 @@ class SyncService:
                 league_id = str(league_data["league_id"])
                 self._upsert_league(league_data)
                 self.db.execute(delete(LeagueUser).where(LeagueUser.league_id == league_id))
+                league_members: list[tuple[dict[str, Any], dict[str, Any]]] = []
                 for item in league_users:
                     if item.get("user_id"):
                         self._upsert_user(item)
                         metadata = item.get("metadata") or {}
-                        self.db.add(LeagueUser(
-                            league_id=league_id, user_id=str(item["user_id"]),
-                            display_name=item.get("display_name"), team_name=metadata.get("team_name"),
-                            is_commissioner=bool(item.get("is_owner")), metadata_json=metadata,
-                        ))
+                        league_members.append((item, metadata))
+                # SQLAlchemy has no ORM relationship between these tables, so make
+                # the referenced users durable before inserting association rows.
+                # SQLite often tolerates the ambiguous flush order; PostgreSQL does not.
+                self.db.flush()
+                for item, metadata in league_members:
+                    self.db.add(LeagueUser(
+                        league_id=league_id, user_id=str(item["user_id"]),
+                        display_name=item.get("display_name"), team_name=metadata.get("team_name"),
+                        is_commissioner=bool(item.get("is_owner")), metadata_json=metadata,
+                    ))
                 self.db.execute(delete(RosterPlayer).where(RosterPlayer.league_id == league_id))
                 self.db.execute(delete(FantasyRoster).where(FantasyRoster.league_id == league_id))
                 for roster in rosters:
