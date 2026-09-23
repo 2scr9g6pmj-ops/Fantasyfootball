@@ -2,21 +2,17 @@ services:
   - type: web
     name: fantasyfootball-lineup-assistant
     runtime: python
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
-    disk:
-      name: fantasyfootball-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: DATABASE_URL
-        value: sqlite:////var/data/fantasyfootball.db
+        sync: false
       - key: SLEEPER_USERNAME
         value: CousinsFF
       - key: YAHOO_CLIENT_ID
