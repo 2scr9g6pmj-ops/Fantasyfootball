@@ -15,5 +15,22 @@ def test_optimizer_respects_flex_and_unique_players():
     assert {p.player_id for _, p in lineup} == {"rb1", "wr1"}
 
 
+def test_optimizer_handles_realistic_roster_and_duplicate_slots():
+    positions = ["QB"] * 3 + ["RB"] * 7 + ["WR"] * 7 + ["TE"] * 3
+    players = [
+        Candidate(f"p{index}", position, float(index), float(index))
+        for index, position in enumerate(positions, start=1)
+    ]
+    lineup = optimize(
+        ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "SUPER_FLEX", "BN"],
+        players,
+    )
+    assert len(lineup) == 8
+    assert len({player.player_id for _, player in lineup}) == 8
+    assert [slot for slot, _ in lineup] == [
+        "QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "SUPER_FLEX"
+    ]
+
+
 def test_injury_reduces_start_score():
     assert start_score(15, None) > start_score(15, "Out")
