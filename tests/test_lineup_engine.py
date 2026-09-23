@@ -1,6 +1,8 @@
 from app.services.lineup_optimizer import Candidate, optimize
 from app.services.recommendation_engine import start_score
 from app.services.scoring_engine import fantasy_points
+from app.services.projection_provider import SleeperProjectionProvider
+import httpx
 
 
 def test_league_scoring_changes_projection():
@@ -34,3 +36,18 @@ def test_optimizer_handles_realistic_roster_and_duplicate_slots():
 
 def test_injury_reduces_start_score():
     assert start_score(15, None) > start_score(15, "Out")
+
+
+def test_sleeper_projection_provider_returns_projected_stats():
+    def handler(request):
+        assert request.url.path == "/projections/nfl/2026/3"
+        assert request.url.params["season_type"] == "regular"
+        return httpx.Response(200, json=[
+            {"player_id": "p1", "stats": {"pass_yd": 275, "pass_td": 2, "opponent": "NYJ"}}
+        ])
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = SleeperProjectionProvider("https://example.test/projections/nfl", client=client)
+    assert provider.projections(3, "2026") == {
+        "p1": {"pass_yd": 275.0, "pass_td": 2.0}
+    }

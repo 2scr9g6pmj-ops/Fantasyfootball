@@ -113,11 +113,11 @@ JSON columns preserve flexible Sleeper settings without coupling the schema to a
 
 ## Sleeper API behavior
 
-This project uses only endpoints documented at [docs.sleeper.com](https://docs.sleeper.com/): user lookup, NFL state, user leagues, league users, league rosters, and the NFL player map. Sleeper requires no API token and asks clients to remain below 1,000 calls per minute. The large player map is fetched once per sync and only rostered players are persisted.
+Account, league, roster, and player synchronization uses endpoints documented at [docs.sleeper.com](https://docs.sleeper.com/). Sleeper requires no API token and asks clients to remain below 1,000 calls per minute. The large player map is fetched once per sync and only rostered players are persisted. Weekly projections use a separate, configurable provider adapter and are cached in the database; CSV import remains available if that feed changes or is unavailable.
 
 ## Next milestone
 
-The first Milestone 2 slice is included: a swappable `ProjectionProvider`, league-specific scoring, Conservative/Balanced/Upside profiles, legal lineup optimization, and a responsive dashboard. Import projected stat lines (not generic fantasy points) so each league's scoring is applied independently:
+The first Milestone 2 slice is included: a swappable `ProjectionProvider`, league-specific scoring, Conservative/Balanced/Upside profiles, legal lineup optimization, and a responsive dashboard. The dashboard fetches available weekly Sleeper projected stat lines through a configurable provider and stores a league/week snapshot. Because that projection feed is separate from Sleeper's documented v1 API, manual CSV import remains the supported fallback. Import projected stat lines (not generic fantasy points) so each league's scoring is applied independently:
 
 ```powershell
 $rows = @(
